@@ -136,10 +136,6 @@ function requireAuthApi(req, res, next) {
   if (!getSession(req)) return res.status(401).json({ error: 'Unauthorized' });
   next();
 }
-function requireAuthPage(req, res, next) {
-  if (!getSession(req)) return res.redirect('/?login=1');
-  next();
-}
 
 const attempts = new Map();
 function checkRateLimit(ip) {
@@ -244,24 +240,12 @@ app.post('/api/config', requireAuthApi, async (req, res) => {
 
   const existing = loadConfig() || {};
   let apiKey = existing.apiKey || '';
-  if (apiKeyInput) {
-    if (apiKeyInput.includes('•')) {
-      apiKey = existing.apiKey || '';
-    } else {
-      apiKey = apiKeyInput;
-    }
-  }
+  if (apiKeyInput && !apiKeyInput.includes('•')) apiKey = apiKeyInput;
   if (!apiKey) return res.status(400).json({ error: 'API Key is required' });
 
   try { new URL(baseUrl); } catch { return res.status(400).json({ error: 'Invalid Base URL' }); }
 
-  const next = {
-    baseUrl,
-    apiKey,
-    model,
-    systemPrompt,
-    updatedAt: new Date().toISOString()
-  };
+  const next = { baseUrl, apiKey, model, systemPrompt, updatedAt: new Date().toISOString() };
   saveConfig(next);
   audit('config.save', req, { model });
   res.json(publicConfig(next));
@@ -279,16 +263,9 @@ app.post('/api/config/test', requireAuthApi, async (req, res) => {
       max_tokens: 10
     });
     const text = result.choices && result.choices[0] && result.choices[0].message && result.choices[0].message.content || '';
-    res.json({
-      ok: true,
-      latency: Date.now() - started,
-      reply: String(text).trim().slice(0, 100),
-      model: cfg.model
-    });
+    res.json({ ok: true, latency: Date.now() - started, reply: String(text).trim().slice(0, 100), model: cfg.model });
   } catch (err) {
-    res.status(400).json({
-      error: 'Connection failed: ' + (err.message || String(err)).slice(0, 300)
-    });
+    res.status(400).json({ error: 'Connection failed: ' + (err.message || String(err)).slice(0, 300) });
   }
 });
 
@@ -378,9 +355,7 @@ app.post('/api/chat', requireAuthApi, async (req, res) => {
     });
   } catch (err) {
     const msg = String(err && err.message || err);
-    if (!closed) {
-      send({ type: 'error', message: msg });
-    }
+    if (!closed) send({ type: 'error', message: msg });
     audit('chat.error', req, { message: msg.slice(0, 200) });
   } finally {
     if (!closed) {
@@ -390,14 +365,15 @@ app.post('/api/chat', requireAuthApi, async (req, res) => {
   }
 });
 
-/* PAGES */
-app.get('/', requireAuthPage, (req, res) => {
+/* PAGES — always serve SPA shell; client handles auth UI */
+app.get('/', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(VIEWS_DIR, 'index.html'));
 });
 
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found' });
-  if (getSession(req)) return res.redirect('/');
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(VIEWS_DIR, 'index.html'));
 });
 
